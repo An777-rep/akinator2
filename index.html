@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Акинатор — Угадай персонажа</title>
+  <style>
+    :root {
+      --bg-color: #0f111a;
+      --card-bg: #1a1d29;
+      --accent: #6c5ce7;
+      --accent-hover: #5b4bc4;
+      --text: #ffffff;
+      --text-muted: #a4b0be;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 600px;
+      background-color: var(--card-bg);
+      border-radius: 16px;
+      padding: 30px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      text-align: center;
+      box-sizing: border-box;
+      margin: 15px;
+    }
+
+    h1 {
+      margin-top: 0;
+      color: var(--accent);
+      font-size: 2.2rem;
+      margin-bottom: 5px;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      margin-bottom: 25px;
+    }
+
+    .question-box {
+      font-size: 1.3rem;
+      font-weight: 500;
+      margin-bottom: 30px;
+      min-height: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 10px;
+      line-height: 1.4;
+    }
+
+    .answers-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    button {
+      padding: 15px;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+      color: white;
+      transition: transform 0.1s, background-color 0.2s;
+    }
+
+    button:active {
+      transform: scale(0.97);
+    }
+
+    .btn-yes { background-color: #2ed573; }
+    .btn-yes:hover { background-color: #26af5f; }
+
+    .btn-no { background-color: #ff4757; }
+    .btn-no:hover { background-color: #e84118; }
+
+    .btn-idontknow { background-color: #ffa502; grid-column: span 2; }
+    .btn-idontknow:hover { background-color: #e59400; }
+
+    .btn-restart {
+      background-color: var(--accent);
+      width: 100%;
+      margin-top: 15px;
+    }
+    .btn-restart:hover { background-color: var(--accent-hover); }
+
+    .progress {
+      margin-top: 20px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .character-result {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #2ed573;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container" id="gameScreen">
+  <h1>Акинатор</h1>
+  <div class="subtitle" id="stepIndicator">Вопрос 1</div>
+
+  <div class="question-box" id="questionText">Загрузка вопросов...</div>
+
+  <div class="answers-grid" id="buttonsGrid">
+    <button class="btn-yes" onclick="answer(1)">Да</button>
+    <button class="btn-no" onclick="answer(0)">Нет</button>
+    <button class="btn-idontknow" onclick="answer(0.5)">Не знаю</button>
+  </div>
+
+  <div class="progress" id="progressText"></div>
+</div>
+
+<div class="container hidden" id="resultScreen">
+  <h1>Это же...</h1>
+  <div class="character-result" id="resultName">Имя персонажа</div>
+  <div class="subtitle" id="resultDesc">Описание</div>
+  <button class="btn-restart" onclick="restartGame()">Сыграть еще раз</button>
+</div>
+
+<script>
+  // База персонажей и их характеристик (вероятности от 0 до 1)
+  const characters = [
+    { name: "Владимир Путин", desc: "Президент России, политик", traits: { real: 1, male: 1, russian: 1, politician: 1, fictional: 0, anime: 0, streamer: 0 } },
+    { name: "Алексей Навальный", desc: "Российский политик и оппозиционер", traits: { real: 1, male: 1, russian: 1, politician: 1, fictional: 0, anime: 0, streamer: 0 } },
+    { name: "Илон Маск", desc: "Миллиардер, инженер, основатель SpaceX", traits: { real: 1, male: 1, russian: 0, politician: 0, fictional: 0, anime: 0, streamer: 0, tech: 1 } },
+    { name: "Гарри Поттер", desc: "Волшебник из вселенной Джоан Роулинг", traits: { real: 0, male: 1, russian: 0, politician: 0, fictional: 1, anime: 0, wizard: 1, game: 0 } },
+    { name: "Наруто Узумаки", desc: "Ниндзя, главный герой аниме Naruto", traits: { real: 0, male: 1, russian: 0, politician: 0, fictional: 1, anime: 1, ninja: 1 } },
+    { name: "Моргенштерн", desc: "Музыкант, скандальный рэпер", traits: { real: 1, male: 1, russian: 1, politician: 0, fictional: 0, anime: 0, musician: 1 } },
+    { name: "Шрек", desc: "Зеленый огр из популярного мультфильма", traits: { real: 0, male: 1, russian: 0, politician: 0, fictional: 1, anime: 0, monster: 1 } },
+    { name: "Пикачу", desc: "Электрический покемон", traits: { real: 0, male: 0, russian: 0, politician: 0, fictional: 1, anime: 1, animal: 1 } },
+    { name: "Спанч Боб", desc: "Губка из мультсериала", traits: { real: 0, male: 1, russian: 0, politician: 0, fictional: 1, anime: 0, underwater: 1 } },
+    { name: "Эминем", desc: "Легендарный американский рэпер", traits: { real: 1, male: 1, russian: 0, politician: 0, fictional: 0, anime: 0, musician: 1 } },
+    { name: "Ивангай", desc: "Популярный ютубер и блогер", traits: { real: 1, male: 1, russian: 1, politician: 0, fictional: 0, anime: 0, blogger: 1 } },
+    { name: "Бэтмен", desc: "Супергерой комиксов DC, защитник Готэма", traits: { real: 0, male: 1, russian: 0, politician: 0, fictional: 1, anime: 0, superhero: 1 } }
+  ];
+
+  // Список вопросов, привязанных к признакам (traits)
+  const questions = [
+    { text: "Ваш персонаж реально существует (или существовал)?", trait: "real" },
+    { text: "Ваш персонаж — мужчина?", trait: "male" },
+    { text: "Ваш персонаж из России или связан с ней?", trait: "russian" },
+    { text: "Ваш персонаж является вымышленным (книги, фильмы, игры)?", trait: "fictional" },
+    { text: "Ваш персонаж из аниме или манги?", trait: "anime" },
+    { text: "Ваш персонаж занимается политикой?", trait: "politician" },
+    { text: "Ваш персонаж — музыкант или певец?", trait: "musician" },
+    { text: "Ваш персонаж носит супергеройский костюм или обладает суперсилами?", trait: "superhero" }
+  ];
+
+  let currentQuestionIndex = 0;
+  // Вероятности для каждого персонажа (на старте у всех равные шансы)
+  let characterScores = [];
+
+  function initGame() {
+    currentQuestionIndex = 0;
+    characterScores = characters.map(() => 1.0);
+    showQuestion();
+  }
+
+  function showQuestion() {
+    if (currentQuestionIndex >= questions.length || isGameOver()) {
+      showResult();
+      return;
+    }
+
+    document.getElementById('stepIndicator').textContent = `Вопрос ${currentQuestionIndex + 1}`;
+    document.getElementById('questionText').textContent = questions[currentQuestionIndex].text;
+    document.getElementById('progressText').textContent = `Осталось вариантов: ${getActiveCount()}`;
+  }
+
+  function answer(userAnswer) {
+    const currentTrait = questions[currentQuestionIndex].trait;
+
+    // Корректируем веса персонажей на основе ответа
+    characters.forEach((char, idx) => {
+      const hasTrait = char.traits[currentTrait] ? 1 : 0;
+      // Если ответ "Да" (1), а у персонажа нет этого признака, или наоборот — снижаем вес
+      const diff = Math.abs(hasTrait - userAnswer);
+      characterScores[idx] *= (1 - diff * 0.7);
+    });
+
+    currentQuestionIndex++;
+    showQuestion();
+  }
+
+  function getActiveCount() {
+    return characterScores.filter(score => score > 0.2).length;
+  }
+
+  function isGameOver() {
+    const maxScore = Math.max(...characterScores);
+    // Если один из персонажей явно лидирует или закончились вопросы
+    return maxScore > 3.0 || currentQuestionIndex >= questions.length;
+  }
+
+  function showResult() {
+    // Находим персонажа с наибольшим счетом
+    let bestIndex = 0;
+    let maxScore = -1;
+    characterScores.forEach((score, idx) => {
+      if (score > maxScore) {
+        maxScore = score;
+        bestIndex = idx;
+      }
+    });
+
+    const chosen = characters[bestIndex];
+
+    document.getElementById('gameScreen').classList.add('hidden');
+    document.getElementById('resultScreen').classList.remove('hidden');
+    document.getElementById('resultName').textContent = chosen.name;
+    document.getElementById('resultDesc').textContent = chosen.desc;
+  }
+
+  function restartGame() {
+    document.getElementById('resultScreen').classList.add('hidden');
+    document.getElementById('gameScreen').classList.remove('hidden');
+    initGame();
+  }
+
+  // Запуск при загрузке страницы
+  window.onload = initGame;
+</script>
+
+</body>
+</html>
