@@ -1,0 +1,8 @@
+{
+  "name": "akinator-ru",
+  "version": "1.0.0",
+  "description": "Simple Akinator game in Russian",
+  "scripts": {
+    "start": "echo 'Static site, no build needed'"
+  }
+}
