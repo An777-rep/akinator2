@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Неоновые Аркадные Гонки</title>
+    <!-- Tailwind CSS CDN для стильного HUD -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #05050d;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            user-select: none;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        /* Неоновое свечение для HUD */
+        .neon-text-blue {
+            text-shadow: 0 0 10px rgba(0, 240, 255, 0.7), 0 0 20px rgba(0, 240, 255, 0.4);
+        }
+        .neon-text-pink {
+            text-shadow: 0 0 10px rgba(255, 0, 127, 0.7), 0 0 20px rgba(255, 0, 127, 0.4);
+        }
+        .neon-box {
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.2), inset 0 0 15px rgba(0, 240, 255, 0.1);
+            backdrop-filter: blur(8px);
+        }
+    </style>
+</head>
+<body class="relative">
+
+    <!-- Контейнер для 3D Рендера -->
+    <div id="canvas-container"></div>
+
+    <!-- HUD Отображение поверх Canvas -->
+    <div id="hud" class="absolute top-0 left-0 w-full h-full pointer-events-none p-6 flex flex-col justify-between box-border">
+        <!-- Верхняя панель: Счет и Скорость -->
+        <div class="flex justify-between items-start">
+            <div class="bg-slate-900/80 border border-cyan-500/40 rounded-xl p-4 neon-box">
+                <div class="text-xs uppercase tracking-wider text-cyan-400 font-semibold mb-1">Дистанция</div>
+                <div id="score-val" class="text-3xl font-black text-white tracking-wider neon-text-blue">0 <span class="text-sm font-normal text-cyan-300">м</span></div>
+            </div>
+
+            <div class="bg-slate-900/80 border border-pink-500/40 rounded-xl p-4 neon-box text-right">
+                <div class="text-xs uppercase tracking-wider text-pink-400 font-semibold mb-1">Скорость</div>
+                <div id="speed-val" class="text-4xl font-black text-white tracking-wider neon-text-pink">0 <span class="text-sm font-normal text-pink-300">км/ч</span></div>
+            </div>
+        </div>
+
+        <!-- Подсказка по управлению на мобильных / ПК -->
+        <div class="flex justify-center mb-2">
+            <div class="bg-slate-900/60 border border-slate-700/50 rounded-full px-6 py-2 text-xs text-slate-300 backdrop-blur-sm">
+                Управление: <span class="text-cyan-400 font-bold">W / A / S / D</span> или <span class="text-cyan-400 font-bold">Стрелки</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно Game Over -->
+    <div id="game-over-modal" class="absolute inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center hidden z-50">
+        <div class="bg-slate-900/90 border-2 border-pink-500/60 rounded-2xl p-8 max-w-md w-full text-center shadow-2xl transform scale-100 transition-all">
+            <h1 class="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-400 mb-2 tracking-wider">
+                СТОЛКНОВЕНИЕ!
+            </h1>
+            <p class="text-slate-400 text-sm mb-6">Ваш заезд окончен</p>
+            
+            <div class="bg-slate-800/60 rounded-xl p-4 mb-6 border border-slate-700">
+                <div class="text-xs text-slate-400 uppercase tracking-widest mb-1">Итоговый результат</div>
+                <div id="final-score" class="text-4xl font-extrabold text-cyan-400 neon-text-blue">0 м</div>
+            </div>
+
+            <button id="restart-btn" class="w-full py-4 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-bold rounded-xl shadow-lg transition-all transform hover:scale-[1.02] active:scale-95 cursor-pointer pointer-events-auto">
+                ИГРАТЬ СНОВА (Пробел)
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ И НАСТРОЙКИ ===
+        let scene, camera, renderer;
+        let playerCar, playerBody;
+        let road, roadSegments = [];
+        let buildings = [];
+        let obstacles = [];
+        let streetLights = [];
+        
+        // Параметры физики и движения
+        const ROAD_WIDTH = 24;
+        const ROAD_LENGTH = 400;
+        const SEGMENT_COUNT = 80;
+        let speed = 0;
+        let maxSpeed = 1.8;
+        let accel = 0.025;
+        let decel = 0.015;
+        let turnSpeed = 0.28;
+        let playerX = 0;
+        let distance = 0;
+        let gameOver = false;
+
+        // Ввод пользователя
+        const keys = { forward: false, backward: false, left: false, right: false };
+
+        // DOM элементы
+        const scoreElem = document.getElementById('score-val');
+        const speedElem = document.getElementById('speed-val');
+        const gameOverModal = document.getElementById('game-over-modal');
+        const finalScoreElem = document.getElementById('final-score');
+        const restartBtn = document.getElementById('restart-btn');
+
+        function init() {
+            // 1. Создание сцены
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x050510);
+            scene.fog = new THREE.FogExp2(0x0a0a20, 0.008);
+
+            // 2. Камера
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 3.5, -7);
+
+            // 3. Рендерер
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            // 4. Освещение (Закатно-неоновый стиль)
+            const ambientLight = new THREE.AmbientLight(0x3d2b56, 1.2);
+            scene.add(ambientLight);
+
+            // Главный направленный свет (имитация заходящего солнца)
+            const dirLight = new THREE.DirectionalLight(0xff7733, 1.5);
+            dirLight.position.set(20, 40, -50);
+            dirLight.castShadow = true;
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
+            dirLight.shadow.camera.near = 0.5;
+            dirLight.shadow.camera.far = 150;
+            const d = 30;
+            dirLight.shadow.camera.left = -d;
+            dirLight.shadow.camera.right = d;
+            dirLight.shadow.camera.top = d;
+            dirLight.shadow.camera.bottom = -d;
+            scene.add(dirLight);
+
+            // Синий backlight для контраста
+            const backLight = new THREE.DirectionalLight(0x00d2ff, 0.8);
+            backLight.position.set(-20, 20, 50);
+            scene.add(backLight);
+
+            createPlayerCar();
+            createEnvironment();
+
+            // Обработчики событий
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('keydown', (e) => handleKey(e, true));
+            window.addEventListener('keyup', (e) => handleKey(e, false));
+            restartBtn.addEventListener('click', resetGame);
+
+            // Запуск игрового цикла
+            animate();
+        }
+
+        // Функция создания спортивной 3D машины из примитивов
+        function createPlayerCar() {
+            playerCar = new THREE.Group();
+
+            // Основной корпус
+            const bodyGeo = new THREE.BoxGeometry(1.8, 0.6, 3.8);
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x00f0ff, roughness: 0.2, metalness: 0.8 });
+            playerBody = new THREE.Mesh(bodyGeo, bodyMat);
+            playerBody.position.y = 0.5;
+            playerBody.castShadow = true;
+            playerCar.add(playerBody);
+
+            // Кабина / Стекла
+            const cabinGeo = new THREE.BoxGeometry(1.4, 0.5, 1.8);
+            const cabinMat = new THREE.MeshStandardMaterial({ color: 0x111122, roughness: 0.1, metalness: 0.9 });
+            const cabin = new THREE.Mesh(cabinGeo, cabinMat);
+            cabin.position.set(0, 0.9, -0.2);
+            cabin.castShadow = true;
+            playerCar.add(cabin);
+
+            // Антикрыло (спойлер)
+            const spoilerWing = new THREE.Mesh(
+                new THREE.BoxGeometry(1.8, 0.08, 0.4),
+                bodyMat
+            );
+            spoilerWing.position.set(0, 1.0, -1.7);
+            playerCar.add(spoilerWing);
+
+            const spoilerSupport1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.3, 0.1), bodyMat);
+            spoilerSupport1.position.set(-0.6, 0.8, -1.7);
+            const spoilerSupport2 = spoilerSupport1.clone();
+            spoilerSupport2.position.x = 0.6;
+            playerCar.add(spoilerSupport1, spoilerSupport2);
+
+            // Колеса
+            const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.3, 16);
+            wheelGeo.rotateZ(Math.PI / 2);
+            const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
+
+            const wheelPositions = [
+                [-0.95, 0.35, 1.1],  // переднее левое
+                [0.95, 0.35, 1.1],   // переднее правое
+                [-0.95, 0.35, -1.1], // заднее левое
+                [0.95, 0.35, -1.1]   // заднее правое
+            ];
+
+            wheelPositions.forEach(pos => {
+                const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+                wheel.position.set(...pos);
+                wheel.castShadow = true;
+                playerCar.add(wheel);
+            });
+
+            // Фары (передние - светящиеся неоновые)
+            const lightGeo = new THREE.BoxGeometry(0.4, 0.15, 0.1);
+            const frontLightMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            
+            const leftHeadlight = new THREE.Mesh(lightGeo, frontLightMat);
+            leftHeadlight.position.set(-0.6, 0.55, 1.9);
+            const rightHeadlight = leftHeadlight.clone();
+            rightHeadlight.position.x = 0.6;
+            playerCar.add(leftHeadlight, rightHeadlight);
+
+            // Задние фонари
+            const backLightMat = new THREE.MeshBasicMaterial({ color: 0xff0055 });
+            const tailLight = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.1, 0.1), backLightMat);
+            tailLight.position.set(0, 0.6, -1.91);
+            playerCar.add(tailLight);
+
+            // Источники света от фар
+            const spotLightLeft = new THREE.SpotLight(0xffffff, 2, 40, Math.PI / 6, 0.5);
+            spotLightLeft.position.set(-0.6, 0.5, 1.9);
+            spotLightLeft.target.position.set(-0.6, 0, 20);
+            playerCar.add(spotLightLeft);
+            playerCar.add(spotLightLeft.target);
+
+            const spotLightRight = new THREE.SpotLight(0xffffff, 2, 40, Math.PI / 6, 0.5);
+            spotLightRight.position.set(0.6, 0.5, 1.9);
+            spotLightRight.target.position.set(0.6, 0, 20);
+            playerCar.add(spotLightRight);
+            playerCar.add(spotLightRight.target);
+
+            scene.add(playerCar);
+        }
+
+        function createEnvironment() {
+            // Бесконечные сегменты дороги
+            const segmentLength = ROAD_LENGTH / SEGMENT_COUNT;
+            const roadGeo = new THREE.PlaneGeometry(ROAD_WIDTH, segmentLength);
+            roadGeo.rotateX(-Math.PI / 2);
+
+            const roadMat = new THREE.MeshStandardMaterial({ color: 0x151522, roughness: 0.6 });
+
+            // Полосы разметки
+            const stripeGeo = new THREE.PlaneGeometry(0.3, segmentLength * 0.5);
+            stripeGeo.rotateX(-Math.PI / 2);
+            const stripeMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff });
+
+            // Отбойники
+            const railGeo = new THREE.BoxGeometry(0.4, 0.6, segmentLength);
+            const railMat = new THREE.MeshStandardMaterial({ color: 0xff007f, roughness: 0.3, metalness: 0.8 });
+
+            for (let i = 0; i < SEGMENT_COUNT; i++) {
+                const group = new THREE.Group();
+                const zPos = i * segmentLength;
+
+                // Дорожное полотно
+                const tile = new THREE.Mesh(roadGeo, roadMat);
+                tile.receiveShadow = true;
+                group.add(tile);
+
+                // Центральная неоновая полоса (прерывистая)
+                if (i % 2 === 0) {
+                    const stripe = new THREE.Mesh(stripeGeo, stripeMat);
+                    stripe.position.y = 0.02;
+                    group.add(stripe);
+                }
+
+                // Боковые отбойники
+                const leftRail = new THREE.Mesh(railGeo, railMat);
+                leftRail.position.set(-ROAD_WIDTH / 2, 0.3, 0);
+                const rightRail = new THREE.Mesh(railGeo, railMat);
+                rightRail.position.set(ROAD_WIDTH / 2, 0.3, 0);
+                group.add(leftRail, rightRail);
+
+                group.position.z = zPos;
+                scene.add(group);
+                roadSegments.push(group);
+            }
+
+            // Создаем процедурные здания по бокам
+            for (let i = 0; i < 40; i++) {
+                createBuilding(i * 15 - 50);
+            }
+        }
+
+        // Процедурное неоновое здание
+        function createBuilding(zPos) {
+            const height = 15 + Math.random() * 35;
+            const width = 8 + Math.random() * 8;
+            const depth = 8 + Math.random() * 8;
+
+            const geo = new THREE.BoxGeometry(width, height, depth);
+            const colors = [0x0d0d26, 0x120a2a, 0x0a182a];
+            const mat = new THREE.MeshStandardMaterial({
+                color: colors[Math.floor(Math.random() * colors.length)],
+                roughness: 0.4
+            });
+
+            // Здание слева
+            const bLeft = new THREE.Mesh(geo, mat);
+            const xOffsetLeft = -(ROAD_WIDTH / 2 + width / 2 + 4 + Math.random() * 5);
+            bLeft.position.set(xOffsetLeft, height / 2, zPos);
+
+            // Здание справа
+            const bRight = new THREE.Mesh(geo, mat);
+            const xOffsetRight = (ROAD_WIDTH / 2 + width / 2 + 4 + Math.random() * 5);
+            bRight.position.set(xOffsetRight, height / 2, zPos);
+
+            scene.add(bLeft, bRight);
+            buildings.push({ mesh: bLeft, width, height, depth }, { mesh: bRight, width, height, depth });
+        }
+
+        function spawnObstacle() {
+            if (gameOver) return;
+
+            const obstacleGroup = new THREE.Group();
+            
+            // Цвета соперников/препятствий
+            const colors = [0xff0055, 0xffaa00, 0x00ff66, 0x9900ff];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+
+            // Корпус чужой машины
+            const body = new THREE.Mesh(
+                new THREE.BoxGeometry(1.7, 0.7, 3.5),
+                new THREE.MeshStandardMaterial({ color: color, roughness: 0.3 })
+            );
+            body.position.y = 0.5;
+            body.castShadow = true;
+            obstacleGroup.add(body);
+
+            // Кабина
+            const cabin = new THREE.Mesh(
+                new THREE.BoxGeometry(1.3, 0.5, 1.6),
+                new THREE.MeshStandardMaterial({ color: 0x111111 })
+            );
+            cabin.position.set(0, 0.9, -0.1);
+            obstacleGroup.add(cabin);
+
+            // Задние огни препятствия
+            const tailLights = new THREE.Mesh(
+                new THREE.BoxGeometry(1.4, 0.1, 0.1),
+                new THREE.MeshBasicMaterial({ color: 0xff0000 })
+            );
+            tailLights.position.set(0, 0.6, -1.76);
+            obstacleGroup.add(tailLights);
+
+            // Позиционирование по полосам
+            const lanes = [-7, -2.5, 2.5, 7];
+            const lane = lanes[Math.floor(Math.random() * lanes.length)];
+            
+            // Спавним далеко впереди
+            const spawnZ = playerCar.position.z + 180 + Math.random() * 40;
+            obstacleGroup.position.set(lane, 0, spawnZ);
+
+            scene.add(obstacleGroup);
+            obstacles.push({
+                mesh: obstacleGroup,
+                speed: 0.2 + Math.random() * 0.3, // Препятствия двигаются вперед с меньшей скоростью
+                radius: 1.2
+            });
+        }
+
+        function handleKey(e, isDown) {
+            if (e.repeat) return;
+            switch(e.code) {
+                case 'KeyW': case 'ArrowUp': keys.forward = isDown; break;
+                case 'KeyS': case 'ArrowDown': keys.backward = isDown; break;
+                case 'KeyA': case 'ArrowLeft': keys.left = isDown; break;
+                case 'KeyD': case 'ArrowRight': keys.right = isDown; break;
+                case 'Space': 
+                    if (gameOver && isDown) resetGame(); 
+                    break;
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!gameOver) {
+                updatePhysics();
+                updateWorld();
+                updateCamera();
+                checkCollisions();
+                updateHUD();
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function updatePhysics() {
+            // Ускорение и торможение
+            if (keys.forward) {
+                speed += accel;
+            } else if (keys.backward) {
+                speed -= accel * 0.8;
+            } else {
+                // Плавное замедление (инерция)
+                if (speed > 0) speed -= decel;
+                if (speed < 0) speed += decel;
+                if (Math.abs(speed) < 0.005) speed = 0;
+            }
+
+            // Ограничение скорости
+            speed = Math.max(-maxSpeed * 0.3, Math.min(maxSpeed, speed));
+
+            // Рулевое управление (зависит от скорости)
+            if (Math.abs(speed) > 0.05) {
+                const dir = speed > 0 ? 1 : -1;
+                if (keys.left) playerX -= turnSpeed * dir;
+                if (keys.right) playerX += turnSpeed * dir;
+            }
+
+            // Ограничения трассы (отбойники)
+            const maxDriveX = ROAD_WIDTH / 2 - 1.5;
+            if (playerX < -maxDriveX) {
+                playerX = -maxDriveX;
+                speed *= 0.95; // Потеря скорости при трении об отбойник
+            }
+            if (playerX > maxDriveX) {
+                playerX = maxDriveX;
+                speed *= 0.95;
+            }
+
+            // Плавный наклон машины при повороте (занос)
+            let targetRotationY = 0;
+            let targetRotationZ = 0;
+
+            if (keys.left) {
+                targetRotationY = 0.15;
+                targetRotationZ = 0.08;
+            } else if (keys.right) {
+                targetRotationY = -0.15;
+                targetRotationZ = -0.08;
+            }
+
+            playerBody.rotation.y += (targetRotationY - playerBody.rotation.y) * 0.1;
+            playerBody.rotation.z += (targetRotationZ - playerBody.rotation.z) * 0.1;
+
+            // Обновляем позицию игрока
+            playerCar.position.x = playerX;
+            playerCar.position.z += speed;
+
+            // Накопление пройденного расстояния
+            if (speed > 0) {
+                distance += speed;
+            }
+        }
+
+        function updateWorld() {
+            // Зацикливание дорожных сегментов
+            const segmentLength = ROAD_LENGTH / SEGMENT_COUNT;
+            roadSegments.forEach(segment => {
+                if (segment.position.z < playerCar.position.z - 20) {
+                    segment.position.z += ROAD_LENGTH;
+                }
+            });
+
+            // Зацикливание зданий
+            buildings.forEach(b => {
+                if (b.mesh.position.z < playerCar.position.z - 30) {
+                    b.mesh.position.z += 300;
+                }
+            });
+
+            // Спавн новых машин-соперников
+            if (Math.random() < 0.025 && obstacles.length < 8) {
+                spawnObstacle();
+            }
+
+            // Обновление и удаление препятствий
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obs = obstacles[i];
+                // Препятствия едут вперед со своей скоростью
+                obs.mesh.position.z += obs.speed;
+
+                // Если машинка далеко позади — удаляем
+                if (obs.mesh.position.z < playerCar.position.z - 30) {
+                    scene.remove(obs.mesh);
+                    obstacles.splice(i, 1);
+                }
+            }
+        }
+
+        function updateCamera() {
+            // Динамическая камера от 3-го лица с эффектом запаздывания (lerp)
+            const targetCamX = playerCar.position.x * 0.6;
+            const targetCamY = 3.5 + (speed * 0.5); // Камера немного поднимается на скорости
+            const targetCamZ = playerCar.position.z - 7.5 - (speed * 1.2); // Отдаление на высокой скорости
+
+            camera.position.x += (targetCamX - camera.position.x) * 0.08;
+            camera.position.y += (targetCamY - camera.position.y) * 0.08;
+            camera.position.z += (targetCamZ - camera.position.z) * 0.2; // Быстрое следование по Z
+
+            // Точка, куда смотрит камера (чуть впереди машины)
+            const lookAtTarget = new THREE.Vector3(
+                playerCar.position.x * 0.3,
+                1.2,
+                playerCar.position.z + 12
+            );
+            camera.lookAt(lookAtTarget);
+        }
+
+        function checkCollisions() {
+            const playerBox = new THREE.Box3().setFromObject(playerCar);
+            // Немного уменьшим хитбокс для более честной игры
+            playerBox.expandByScalar(-0.3);
+
+            for (let i = 0; i < obstacles.length; i++) {
+                const obsBox = new THREE.Box3().setFromObject(obstacles[i].mesh);
+                obsBox.expandByScalar(-0.2);
+
+                if (playerBox.intersectsBox(obsBox)) {
+                    triggerGameOver();
+                    break;
+                }
+            }
+        }
+
+        function updateHUD() {
+            // Перевод скорости в условные км/ч
+            const displaySpeed = Math.max(0, Math.round(speed * 130));
+            speedElem.innerHTML = `${displaySpeed} <span class="text-sm font-normal text-pink-300">км/ч</span>`;
+            
+            // Дистанция в метрах
+            scoreElem.innerHTML = `${Math.floor(distance)} <span class="text-sm font-normal text-cyan-300">м</span>`;
+        }
+
+        function triggerGameOver() {
+            gameOver = true;
+            finalScoreElem.innerText = `${Math.floor(distance)} м`;
+            gameOverModal.classList.remove('hidden');
+        }
+
+        function resetGame() {
+            // Очистка препятствий
+            obstacles.forEach(obs => scene.remove(obs.mesh));
+            obstacles = [];
+
+            // Сброс параметров игрока
+            speed = 0;
+            playerX = 0;
+            distance = 0;
+            playerCar.position.set(0, 0, 0);
+            playerBody.rotation.set(0, 0, 0);
+
+            // Сброс позиций трассы
+            const segmentLength = ROAD_LENGTH / SEGMENT_COUNT;
+            roadSegments.forEach((segment, i) => {
+                segment.position.z = i * segmentLength;
+            });
+
+            gameOver = false;
+            gameOverModal.classList.add('hidden');
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Старт игры после загрузки страницы
+        window.onload = init;
+    </script>
+</body>
+</html>
